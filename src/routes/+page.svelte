@@ -14,8 +14,7 @@
   let firstName = "";
   let middleInitial = "";
   let surname = "";
-  let subjectCode = "";
-  let section = "";
+  let studentId = "";
 
   // saved temporarily (only sent after Save)
   let registrationData = {};
@@ -47,25 +46,28 @@
     3: "/images/guide3.png"
   };
 
-  // On mount: list cameras
+  // On mount: auto-select EMEET USB webcam
   onMount(async () => {
     const devices = await navigator.mediaDevices.enumerateDevices();
     cameras = devices.filter(d => d.kind === "videoinput");
 
-    // Default for form (QR) → built-in
-    const builtInCam = cameras.find(cam =>
-      (cam.label || "").toLowerCase().includes("integrated") ||
-      (cam.label || "").toLowerCase().includes("built-in") ||
-      (cam.label || "").toLowerCase().includes("internal")
+    // Find EMEET camera
+    const emeetCam = cameras.find(cam =>
+      (cam.label || "").toLowerCase().includes("emeet")
     );
-    selectedCamera = builtInCam ? builtInCam.deviceId : (cameras[0]?.deviceId || "");
 
-    // Default for face scan → USB
-    const usbCam = cameras.find(cam =>
-      (cam.label || "").toLowerCase().includes("usb")
-    );
-    faceCamera = usbCam ? usbCam.deviceId : selectedCamera; // fallback to same if no usb
+    if (emeetCam) {
+      selectedCamera = emeetCam.deviceId;
+      faceCamera = emeetCam.deviceId;
+      console.log("✅ EMEET camera selected:", emeetCam.label);
+    } else {
+      // fallback if EMEET not found
+      selectedCamera = cameras[0]?.deviceId || "";
+      faceCamera = selectedCamera;
+      console.warn("⚠ EMEET camera not found, using default:", cameras[0]?.label);
+    }
   });
+
 
   // -------------------------
   // QR scanner (html5-qrcode) - dynamic import so SSR doesn't break
@@ -78,9 +80,8 @@
       const { Html5Qrcode } = await import("html5-qrcode"); // dynamic import
       html5QrCode = new Html5Qrcode("qr-reader");
 
-      const cameraConfig = selectedCamera
-        ? { deviceId: { exact: selectedCamera } }
-        : { facingMode: "environment" };
+      // Always use the EMEET camera (already set in onMount)
+      const cameraConfig = { deviceId: { exact: selectedCamera } };
 
       await html5QrCode.start(
         cameraConfig,
@@ -96,10 +97,10 @@
           stopScanner();
         },
         (errorMessage) => {
-          // console for scan errors
-          // console.log("QR scan error:", errorMessage);
+          // scan errors (you can keep this quiet or log)
         }
       );
+
 
       console.log("QR scanner started");
       scannerActive = true;
@@ -128,69 +129,79 @@
     // We'll be flexible: assume last tokens are numeric id, course, section,
     // take first 3 or 4 tokens for name pieces.
     const parts = data.trim().split(/\s+/);
-    if (parts.length >= 4) {
-      // find numeric token (student number) index (if present)
-      const numericIndex = parts.findIndex(p => /^\d{4,}$/.test(p));
-      let nameParts;
-      if (numericIndex > 0) {
-        nameParts = parts.slice(0, numericIndex);
-      } else {
-        nameParts = parts.slice(0, 4);
-      }
+    if (parts.length < 4) throw new Error("Invalid QR format");
 
-      // heuristics:
-      if (nameParts.length >= 3) {
-        firstName = nameParts[0] + (nameParts[1] ? " " + nameParts[1] : "");
-        middleInitial = nameParts[2].replace(".", "");
-        surname = nameParts[3] || nameParts[nameParts.length - 1] || "";
-      } else if (nameParts.length === 2) {
-        firstName = nameParts[0];
-        middleInitial = "";
-        surname = nameParts[1];
-      } else {
-        firstName = nameParts.join(" ");
-        middleInitial = "";
-        surname = "";
-      }
+    // find student number (student ID)
+    const numericIndex = parts.findIndex(p => /^\d{4,}$/.test(p));
+    if (numericIndex === -1) throw new Error("Student ID not found");
 
-      // leave subjectCode / section blank for manual input
-      subjectCode = "";
-      section = "";
-      console.log("Filled from QR:", { firstName, middleInitial, surname });
+    const nameParts = parts.slice(0, numericIndex);
+    const studentIdToken = parts[numericIndex]; // ← Student ID
+
+    // Assign names
+    if (nameParts.length >= 3) {
+      firstName = nameParts.slice(0, -2).join(" ");
+      middleInitial = nameParts[nameParts.length - 2].replace(".", "");
+      surname = nameParts[nameParts.length - 1];
+    } else if (nameParts.length === 2) {
+      firstName = nameParts[0];
+      middleInitial = "";
+      surname = nameParts[1];
     } else {
-      throw new Error("Invalid QR format");
+      firstName = nameParts[0];
+      middleInitial = "";
+      surname = "";
     }
+
+    // Student ID
+    studentId = studentIdToken;
+
+    console.log("Filled from QR:", { firstName, middleInitial, surname, studentId });
   }
 
-  // -------------------------
-  // Submit form → go to face page (DO NOT send to server yet)
-  // -------------------------
-  function submitForm() {
+  async function submitForm() {
     registrationData = {
       firstName,
       middleInitial,
       surname,
-      subjectCode,
-      section
+      studentId   // now included instead of subjectCode/section
     };
-    console.log("Form submitted (saved locally):", registrationData);
-    // show face page (camera OFF until user clicks Start Face Scan)
-    ctx = null;
-    if (canvas) {
-      canvas.width = 0;
-      canvas.height = 0;
+
+    try {
+      const res = await fetch("http://localhost:3000/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(registrationData),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.message || "❌ Already registered");
+        return; // stop here
+      }
+
+      // ✅ Not registered yet, move to face capture page
+      console.log("Form check passed:", registrationData);
+      ctx = null;
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      showForm = false;
+      showFacePage = true;
+      setTimeout(() => startScan(), 300);
+    } catch (err) {
+      console.error("Server error:", err);
+      alert("⚠ Server error, please try again");
     }
-    showForm = false;
-    showFacePage = true;
-    setTimeout(() => startScan(), 300);
   }
+
 
   function resetForm() {
     firstName = "";
     middleInitial = "";
     surname = "";
-    subjectCode = "";
-    section = "";
+    studentId = "";
     registrationData = {};
     capturedImages = { pic1: "", pic2: "", pic3: "" };
     faceStep = 1;
@@ -497,25 +508,9 @@
       </label>
 
       <label>
-        Subject Code:
-        <input type="text" bind:value={subjectCode} />
+        Student ID:
+        <input type="text" bind:value={studentId} required />
       </label>
-
-      <label>
-        Section:
-        <input type="text" bind:value={section} />
-      </label>
-
-      {#if cameras.length > 0}
-        <label>
-          Select Camera:
-          <select bind:value={selectedCamera} on:change={() => faceCamera = selectedCamera}>
-            {#each cameras as cam}
-              <option value={cam.deviceId}>{cam.label || "Camera"}</option>
-            {/each}
-          </select>
-        </label>
-      {/if}
 
       <div class="actions">
         <button type="submit" class="submit-btn">Submit</button>
@@ -719,6 +714,7 @@
     width: 100%;
     max-width: 400px;
     margin-top: 1rem;
+    transform: scaleX(-1); /* mirrors horizontally */
     border: 2px solid #0077cc;
     border-radius: 8px;
   }
