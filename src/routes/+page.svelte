@@ -40,11 +40,7 @@
   let detectionInterval;
   let loginImageUrl = "";
 
-  const faceGuides = {
-    1: "/images/guide1.png",
-    2: "/images/guide2.png",
-    3: "/images/guide3.png"
-  };
+  const SERVER_URL = "http://your-server-ip:3000";
 
   // On mount: auto-select EMEET USB webcam
   onMount(async () => {
@@ -160,40 +156,27 @@
   }
 
   async function submitForm() {
+    // Save form data locally, but don't call backend yet
     registrationData = {
       firstName,
       middleInitial,
       surname,
-      studentId   // now included instead of subjectCode/section
+      studentId
     };
 
-    try {
-      const res = await fetch("http://localhost:3000/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(registrationData),
-      });
+    // Move to face capture page
+    showForm = false;
+    showFacePage = true;
 
-      if (!res.ok) {
-        const err = await res.json();
-        alert(err.message || "❌ Already registered");
-        return; // stop here
-      }
-
-      // ✅ Not registered yet, move to face capture page
-      console.log("Form check passed:", registrationData);
-      ctx = null;
-      if (canvas) {
-        canvas.width = 0;
-        canvas.height = 0;
-      }
-      showForm = false;
-      showFacePage = true;
-      setTimeout(() => startScan(), 300);
-    } catch (err) {
-      console.error("Server error:", err);
-      alert("⚠ Server error, please try again");
+    // Reset canvas/context
+    ctx = null;
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
     }
+
+    // Start camera and automatic capture
+    setTimeout(() => startScan(), 300);
   }
 
 
@@ -209,6 +192,32 @@
     showFacePage = false;
   }
 
+  // Take snapshot from video
+  function takeSnapshot() {
+    const ctx = canvas.getContext("2d");
+
+    // target size for FaceAPI detection
+    const TARGET_WIDTH = 640;
+    const TARGET_HEIGHT = 480;
+
+    canvas.width = TARGET_WIDTH;
+    canvas.height = TARGET_HEIGHT;
+
+    // draw scaled image from video
+    ctx.drawImage(video, 0, 0, TARGET_WIDTH, TARGET_HEIGHT);
+
+    return canvas.toDataURL("image/jpeg");
+  }
+  async function checkOrientation() {
+    const frame = takeSnapshot();
+    const res = await fetch(`${SERVER_URL}/check-face`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: frame })
+    });
+    return res.json(); // { orientation: "front" | "left" | "right" | "none" }
+  }
+  
   // -------------------------
   // Face camera functions
   // -------------------------
@@ -229,98 +238,47 @@
       console.log("Camera started");
       // ensure ctx
       if (!ctx && canvas) ctx = canvas.getContext("2d");
+
+      autoCaptureSequence();
     } catch (err) {
       console.error("Camera start error:", err);
       alert("Unable to access camera: " + (err.message || err));
     }
   }
 
-  // helper to wait for video ready
-  function waitForVideoReady(timeout = 3000) {
-    return new Promise((resolve, reject) => {
-      if (!video) return reject(new Error("Video element not found"));
-      if (video.readyState >= 2) return resolve();
-      const onLoaded = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = (e) => {
-        cleanup();
-        reject(e);
-      };
-      const cleanup = () => {
-        video.removeEventListener("loadedmetadata", onLoaded);
-        video.removeEventListener("error", onError);
-        clearTimeout(timer);
-      };
-      video.addEventListener("loadedmetadata", onLoaded);
-      video.addEventListener("error", onError);
-      const timer = setTimeout(() => {
-        cleanup();
-        // still try to proceed
-        if (video.readyState >= 2) resolve();
-        else reject(new Error("Video not ready in time"));
-      }, timeout);
-    });
-  }
+  async function autoCaptureSequence() {
+    const instructions = {
+      1: "Look straight ahead",
+      2: "Turn your face slightly to the RIGHT",
+      3: "Turn your face slightly to the LEFT"
+    };
 
-  async function captureFace() {
-    if (!video || !canvas) {
-      alert("Video or canvas missing");
-      return;
+    while (faceStep <= 3) {
+      let captured = false;
+      console.log("🟢 Waiting for:", instructions[faceStep]);
+
+      while (!captured) {
+        const { orientation } = await checkOrientation();
+        console.log("Orientation:", orientation);
+
+        if (faceStep === 1 && orientation === "front") captured = true;
+        if (faceStep === 2 && orientation === "right") captured = true;
+        if (faceStep === 3 && orientation === "left") captured = true;
+
+        if (captured) {
+          const frame = takeSnapshot();
+          capturedImages[`pic${faceStep}`] = frame;
+          console.log(`✅ Auto captured step ${faceStep}`);
+          faceStep++;
+          await new Promise(res => setTimeout(res, 1500)); // pause before next step
+        }
+
+        await new Promise(res => setTimeout(res, 500)); // polling interval
+      }
     }
 
-    if (!ctx) ctx = canvas.getContext("2d");
-
-    // Wait until video metadata is loaded
-    if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Video not ready")), 3000);
-        const check = () => {
-          if (video.videoWidth > 0 && video.videoHeight > 0) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            requestAnimationFrame(check);
-          }
-        };
-        check();
-      }).catch(err => {
-        console.error(err);
-        alert("Camera not ready, please wait a second and try again.");
-        return;
-      });
-    }
-
-    // Now capture frame safely
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.save();
-    ctx.scale(-1, 1); // flip horizontally
-    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-    ctx.restore();
-
-    const imgData = canvas.toDataURL("image/png");
-    capturedImages[`pic${faceStep}`] = imgData;
-    console.log(`✅ Captured face ${faceStep}, length:`, imgData.length);
-  }
-
-  function nextStep() {
-    if (!capturedImages[`pic${faceStep}`]) {
-      alert("Please capture before proceeding.");
-      return;
-    }
-    if (faceStep < 3) {
-      faceStep++;
-    }
-  }
-
-  function prevStep() {
-    if (faceStep > 1) {
-      faceStep--;
-    } else {
-      goBack(); // back to registration
-    }
+    // After all 3 captured → register
+    await saveData();
   }
 
   async function saveData() {
@@ -329,10 +287,7 @@
       return;
     }
 
-    const payload = {
-      ...registrationData,
-      images: capturedImages
-    };
+    const payload = {...registrationData,images: capturedImages };
 
     console.log("Sending payload to server:", {
       ...registrationData,
@@ -342,13 +297,23 @@
     });
 
     try {
-      const res = await fetch("http://localhost:3000/register", {
+      const res = await fetch(`${SERVER_URL}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
 
-      const result = await res.json().catch(() => ({}));
+      console.log("Server response status:", res.status);
+
+      const raw = await res.text(); // read full text (debugging)
+      console.log("Server raw response:", raw);
+
+      let result;
+      try {
+        result = JSON.parse(raw);
+      } catch {
+        result = {};
+      }
       alert(result.message || "Saved successfully!");
 
       stopCamera();
@@ -367,13 +332,7 @@
       video.srcObject = null;
     }
   }
-  function goBack() {
-    stopCamera();
-    capturedImages = { pic1: "", pic2: "", pic3: "" };
-    faceStep = 1;
-    showFacePage = false;
-    showForm = true;
-  }
+  
   async function startLoginCamera() {
     try {
       // Dynamically find EMEET camera id
@@ -542,37 +501,26 @@
         <!-- Live camera -->
       <video bind:this={video} autoplay muted playsinline class="live-video"></video>
 
-      <!-- Face guide -->
-      <img src={faceGuides[faceStep]} alt="Face guide" class="face-guide" />
-
-
-      <div class="video-container">
-        <!-- Video feed -->
-        <video bind:this={video} autoplay muted playsinline aria-hidden="true"></video>
-
-        <!-- Face guide overlay -->
-        <div class="face-overlay"></div>
-      </div>
 
       <canvas bind:this={canvas} style="display:none"></canvas>
 
-      <div class="actions">
-        <button type="button" on:click={prevStep}>⬅ Back</button>
-        <button type="button" on:click={captureFace}>📸 Capture</button>
+      <div class="preview">
+        {#if capturedImages.pic1}
+          <img src={capturedImages.pic1} width="150" alt="Step 1" />
+        {/if}
+        {#if capturedImages.pic2}
+          <img src={capturedImages.pic2} width="150" alt="Step 2" />
+        {/if}
+        {#if capturedImages.pic3}
+          <img src={capturedImages.pic3} width="150" alt="Step 3" />
+        {/if}
       </div>
 
-      {#if capturedImages[`pic${faceStep}`]}
-        <div class="preview">
-          <h3>Preview {faceStep}</h3>
-          <img src={capturedImages[`pic${faceStep}`]} alt="Captured face preview" />
-          <div style="margin-top:10px">
-            {#if faceStep < 3}
-              <button type="button" on:click={nextStep}>➡ Next</button>
-            {:else}
-              <button type="button" on:click={saveData}>💾 Save & Submit</button>
-            {/if}
-          </div>
-        </div>
+      <!-- Final status only -->
+      {#if faceStep === 4}
+        <p style="font-weight: bold; color: green; font-size: 1.2rem;">
+          ✅ Face capture complete — data saved automatically
+        </p>
       {/if}
     </div>
   {/if}
@@ -769,35 +717,10 @@
     font-size: 1.2rem;
     font-weight: bold;
   }
-  .video-container {
-    position: relative;
-    display: inline-block;
-  }
 
   video {
     width: 100%;
     max-width: 480px;
-    border-radius: 8px;
-  }
-
-  .face-overlay {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 200px;       /* width of face box */
-    height: 250px;      /* height of face box */
-    border: 3px solid #00ff00;  /* green border */
-    border-radius: 50% / 50%;    /* makes it an oval */
-    transform: translate(-50%, -50%);
-    pointer-events: none; /* clicks pass through */
-    box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
-  }
-  .face-guide {
-    width: 200px;       /* adjust as needed */
-    display: block;
-    margin: 10px auto;  /* center below video */
-    opacity: 0.7;       /* semi-transparent */
-    border: 1px solid #ccc;
     border-radius: 8px;
   }
   .live-video {
