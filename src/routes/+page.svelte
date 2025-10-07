@@ -5,6 +5,8 @@
   let showForm = false;
   let showFacePage = false;
   let showLoginPage = false;
+  let isRecognized = false;
+  let isDetecting = false;
 
   // QR scanner
   let scannerActive = false;
@@ -29,6 +31,10 @@
   let faceCamera = "";
   let faceStep = 1; // 1,2,3
   let capturedImages = { pic1: "", pic2: "", pic3: "" };
+  let faceStatus = "none"; // front | left | right | none
+  let faceDetectionBox = null; // store latest face position
+  let overlayCanvas;
+  let overlayCtx;
 
   let loginVideo;
   let loginCanvas;
@@ -40,7 +46,7 @@
   let detectionInterval;
   let loginImageUrl = "";
 
-  const SERVER_URL = "http://your-server-ip:3000";
+  const SERVER_URL = "http://localhost:3000";
 
   // On mount: auto-select EMEET USB webcam
   onMount(async () => {
@@ -194,19 +200,25 @@
 
   // Take snapshot from video
   function takeSnapshot() {
-    const ctx = canvas.getContext("2d");
+    const tempCanvas = document.createElement("canvas");
+    const ctx = tempCanvas.getContext("2d");
+
+    if (!video || !video.videoWidth) {
+      console.warn("⚠ Video not ready for snapshot");
+      return null;
+    }
 
     // target size for FaceAPI detection
     const TARGET_WIDTH = 640;
     const TARGET_HEIGHT = 480;
 
-    canvas.width = TARGET_WIDTH;
-    canvas.height = TARGET_HEIGHT;
+    tempCanvas.width = TARGET_WIDTH;
+    tempCanvas.height = TARGET_HEIGHT;
 
     // draw scaled image from video
     ctx.drawImage(video, 0, 0, TARGET_WIDTH, TARGET_HEIGHT);
 
-    return canvas.toDataURL("image/jpeg");
+    return tempCanvas.toDataURL("image/jpeg");
   }
   async function checkOrientation() {
     const frame = takeSnapshot();
@@ -223,25 +235,40 @@
   // -------------------------
   async function startScan() {
     try {
-      console.log("Starting camera with selectedCamera:", selectedCamera);
-      // use ideal to avoid failing if exact deviceId isn't usable
-      const constraints = {
-        video: {
-          deviceId: faceCamera ? { exact: faceCamera } : { exact: selectedCamera },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      };
+      console.log("🎥 Starting smooth scan camera...");
+
+      // Dynamically pick the selected camera (like loginCamera)
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      overlayCtx = overlayCanvas?.getContext("2d");
+      const selected = devices.find(
+        d => d.kind === "videoinput" && (d.deviceId === selectedCamera || d.deviceId === faceCamera)
+      );
+
+      let constraints;
+      if (selected) {
+        constraints = { video: { deviceId: { exact: selected.deviceId } } };
+      } else {
+        console.warn("⚠ Selected camera not found, using default camera.");
+        constraints = { video: true };
+      }
+
+      // lighter constraints = smoother video
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       video.srcObject = stream;
-      await video.play();
-      console.log("Camera started");
-      // ensure ctx
+
+      await video.play().catch(err => {
+        console.warn("⚠ Video autoplay blocked, waiting for user gesture:", err);
+      });
+
+      console.log("✅ Camera started:", video.videoWidth, "x", video.videoHeight);
+
       if (!ctx && canvas) ctx = canvas.getContext("2d");
 
+      // start your scanning logic
       autoCaptureSequence();
+
     } catch (err) {
-      console.error("Camera start error:", err);
+      console.error("❌ Camera start error:", err);
       alert("Unable to access camera: " + (err.message || err));
     }
   }
@@ -259,7 +286,7 @@
 
       while (!captured) {
         const { orientation } = await checkOrientation();
-        console.log("Orientation:", orientation);
+        faceStatus = orientation;
 
         if (faceStep === 1 && orientation === "front") captured = true;
         if (faceStep === 2 && orientation === "right") captured = true;
@@ -270,14 +297,29 @@
           capturedImages[`pic${faceStep}`] = frame;
           console.log(`✅ Auto captured step ${faceStep}`);
           faceStep++;
-          await new Promise(res => setTimeout(res, 1500)); // pause before next step
+          await new Promise(res => setTimeout(res, 1000));
         }
 
-        await new Promise(res => setTimeout(res, 500)); // polling interval
+        await new Promise(res => setTimeout(res, 300));
       }
     }
 
-    // After all 3 captured → register
+    // Check if face already exists on server before sending registration
+    const duplicateCheckRes = await fetch(`${SERVER_URL}/login-recognize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: capturedImages.pic1 })
+    });
+
+    const duplicateData = await duplicateCheckRes.json();
+    if (duplicateData.message.includes("Welcome back")) {
+      alert(`❌ This face is already registered: ${duplicateData.message}`);
+      stopCamera();
+      resetForm();
+      return;
+    }
+
+    // If not duplicate → send to registration
     await saveData();
   }
 
@@ -370,7 +412,8 @@
   }
 
   async function sendFrameForDetection() {
-    if (!loginCtx || !loginVideo.videoWidth) return;
+    if (isRecognized || isDetecting || !loginCtx || !loginVideo.videoWidth) return;
+    isDetecting = true;
 
     loginCanvas.width = loginVideo.videoWidth;
     loginCanvas.height = loginVideo.videoHeight;
@@ -379,43 +422,42 @@
     const imageData = loginCanvas.toDataURL("image/png");
 
     try {
-      const res = await fetch("http://localhost:3000/detect-face", {
+      const res = await fetch(`${SERVER_URL}/login-recognize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: imageData })
+        body: JSON.stringify({ image: imageData }),
       });
 
       const data = await res.json();
 
-      if (data.faceDetected) {
+      if ((data.message.includes("Welcome") || data.message.includes("Stranger")) && !isRecognized) {
+        isRecognized = true;
         clearInterval(detectionInterval);
-        await sendForRecognition(imageData);
+        detectionInterval = null;
+        stopLoginCamera();
+
+        loginMessage = data.message;
+        loginMessageColor = data.message.includes("Welcome") ? "green" : "red";
+
+        // Show recognized face image if exists
+        if (data.message.includes("Welcome")) {
+          const name = data.message.replace("✅ Welcome back, ", "").trim();
+          const studentId = name.split(" ")[0]; // assumes first token = ID
+          loginImageUrl = `${SERVER_URL}/face/${studentId}_*`; // you may adjust path pattern
+        }
+
+        // 🕒 Show message for 2 seconds before resetting
+        setTimeout(() => {
+          showLoginPage = false;
+          loginMessage = "";
+          loginImageUrl = "";
+          isRecognized = false;
+        }, 2000);
       }
     } catch (err) {
-      console.error("Detection error:", err);
-    }
-  }
-  async function sendForRecognition(imageData) {
-    try {
-      const res = await fetch("http://localhost:3000/login-recognize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: imageData })
-      });
-
-      const data = await res.json();
-
-      loginMessage = data.message;
-      loginMessageColor = data.message.includes("Welcome") ? "green" : "red";
-      loginImageUrl = data.imageUrl || ""; // 👈 save thumbnail URL
-
-      stopLoginCamera();
-    } catch (err) {
       console.error("Recognition error:", err);
-      loginMessage = "❌ Error during recognition";
-      loginMessageColor = "red";
-      loginImageUrl = "";
-      stopLoginCamera();
+    } finally {
+      isDetecting = false; // ✅ ready for next frame
     }
   }
 
@@ -498,11 +540,9 @@
     <div class="face-page">
       <h2>Face Capture Step {faceStep} for {registrationData.firstName} {registrationData.surname}</h2>
 
-        <!-- Live camera -->
-      <video bind:this={video} autoplay muted playsinline class="live-video"></video>
-
-
-      <canvas bind:this={canvas} style="display:none"></canvas>
+      <div class="video-container">
+        <video bind:this={video} autoplay muted playsinline class="live-video"></video>
+      </div>
 
       <div class="preview">
         {#if capturedImages.pic1}
@@ -529,7 +569,7 @@
     <div class="login-page">
       <h2>Login with Face Recognition</h2>
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video bind:this={loginVideo} autoplay playsinline muted class="border rounded w-96 h-72"></video>
+      <video bind:this={loginVideo} autoplay playsinline muted class="camera-video"></video>
       <canvas bind:this={loginCanvas} style="display:none"></canvas>
 
       <!-- 👇 Result message + thumbnail -->
@@ -723,10 +763,16 @@
     max-width: 480px;
     border-radius: 8px;
   }
-  .live-video {
-    width: 320px;      /* or whatever size you want */
-    border: 2px solid #000;
-    border-radius: 8px;
+  .camera-video {
+    width: 100%;
+    max-width: 400px;          /* keeps consistent desktop width */
+    aspect-ratio: 4 / 3;       /* keeps proper camera proportions */
+    border: 2px solid #0077cc; /* same border for both */
+    border-radius: 10px;
+    object-fit: cover;         /* avoids squishing/stretching */
+    background: #000;          /* fills background when video not loaded */
+    display: block;
+    margin: 1rem auto;         /* centers on page */
   }
 
 </style>
