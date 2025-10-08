@@ -8,6 +8,18 @@
   let isRecognized = false;
   let isDetecting = false;
 
+  // Settings 🔧
+  let showSettingsAuth = false;
+  let showSettingsPage = false;
+  // for authentication
+  let settingsUser = "";
+  let settingsPass = "";
+  let settingsError = "";
+  // 🌐 Settings values
+  let deviceName = localStorage.getItem("deviceName") || "";
+  // Auto-save device name when changed
+  $: localStorage.setItem("deviceName", deviceName);
+
   // QR scanner
   let scannerActive = false;
   let html5QrCode;
@@ -45,8 +57,9 @@
   let loginMessageColor = "black"; 
   let detectionInterval;
   let loginImageUrl = "";
+  let loginImageUrls = [];
 
-  const SERVER_URL = "http://localhost:3000";
+  let SERVER_URL = "http://localhost:3000";
 
   // On mount: auto-select EMEET USB webcam
   onMount(async () => {
@@ -412,9 +425,18 @@
   }
 
   async function sendFrameForDetection() {
-    if (isRecognized || isDetecting || !loginCtx || !loginVideo.videoWidth) return;
-    isDetecting = true;
+    // Prevent overlapping detections
+    if (
+      isRecognized ||
+      isDetecting ||
+      !loginCtx ||
+      !loginVideo ||
+      !loginVideo.srcObject ||
+      loginVideo.readyState < 2
+    ) return; 
+    isDetecting = true; // Mark as detecting
 
+    // Draw the current video frame to the canvas
     loginCanvas.width = loginVideo.videoWidth;
     loginCanvas.height = loginVideo.videoHeight;
     loginCtx.drawImage(loginVideo, 0, 0, loginCanvas.width, loginCanvas.height);
@@ -430,34 +452,34 @@
 
       const data = await res.json();
 
-      if ((data.message.includes("Welcome") || data.message.includes("Stranger")) && !isRecognized) {
-        isRecognized = true;
-        clearInterval(detectionInterval);
-        detectionInterval = null;
-        stopLoginCamera();
+      if (data.message.includes("Welcome") || data.message.includes("Stranger")) {
+        isRecognized = true;       // Lock detection while showing result
+        loginMessage = data.message; // Show message
 
-        loginMessage = data.message;
-        loginMessageColor = data.message.includes("Welcome") ? "green" : "red";
-
-        // Show recognized face image if exists
         if (data.message.includes("Welcome")) {
-          const name = data.message.replace("✅ Welcome back, ", "").trim();
-          const studentId = name.split(" ")[0]; // assumes first token = ID
-          loginImageUrl = `${SERVER_URL}/face/${studentId}_*`; // you may adjust path pattern
+          const studentId = data.studentId; // get ID from server
+          loginImageUrl = `${SERVER_URL}/face/${studentId}_pic1.png`;
+          console.log("Thumbnail URL:", loginImageUrl);
+        } else {
+          loginImageUrl = null; // Stranger → no image
         }
+        if (detectionInterval) clearInterval(detectionInterval);
 
-        // 🕒 Show message for 2 seconds before resetting
+        // Reset recognition after 5 seconds so next login can be detected
         setTimeout(() => {
-          showLoginPage = false;
+          isRecognized = false;
           loginMessage = "";
           loginImageUrl = "";
-          isRecognized = false;
-        }, 2000);
+          showLoginPage = false;
+          stopLoginCamera();
+          // Restart detection interval
+          detectionInterval = setInterval(sendFrameForDetection, 500);
+        }, 3000);
       }
     } catch (err) {
       console.error("Recognition error:", err);
     } finally {
-      isDetecting = false; // ✅ ready for next frame
+      isDetecting = false; // Ready for next frame
     }
   }
 
@@ -473,20 +495,84 @@
     if (loginVideo) loginVideo.srcObject = null;
   }
 
+  function saveDeviceName() {
+    localStorage.setItem("deviceName", deviceName);
+    alert("✅ Device name saved!");
+  }
+  function openSettingsAuth() {
+    showSettingsAuth = true;
+  }
+  function checkSettingsLogin() {
+    const validUser = "admin";
+    const validPass = "1234";
+
+    if (settingsUser === validUser && settingsPass === validPass) {
+      showSettingsAuth = false;
+      showSettingsPage = true;
+      settingsError = "";
+    } else {
+      settingsError = "Invalid username or password";
+    }
+  }
+  function closeSettings() {
+    showSettingsPage = false;
+  }
 </script>
 
 <div class="screen">
-  {#if !showForm && !showFacePage && !showLoginPage}
+  {#if !showForm && !showFacePage && !showLoginPage && !showSettingsAuth && !showSettingsPage}
     <div class="main-buttons">
-      <button class="big-btn" on:click={() => { showLoginPage = true; startLoginCamera(); }}>
+      <button class="big-btn login-btn" on:click={() => { showLoginPage = true; startLoginCamera(); }}>
         Login
       </button>
     </div>
 
     <div class="bottom-button">
-      <button class="big-btn" on:click={() => showForm = true}>
+      <button class="big-btn register-btn" on:click={() => showForm = true}>
         Register
       </button>
+    </div>
+
+    <button class="settings-btn" on:click={openSettingsAuth}>
+      <span class="gear">⚙️</span>
+    </button>
+  {/if}
+  {#if showSettingsAuth}
+    <div class="settings-auth">
+      <h2>Settings Login</h2>
+      <input type="text" placeholder="Username" bind:value={settingsUser} />
+      <input type="password" placeholder="Password" bind:value={settingsPass} />
+
+      {#if settingsError}
+        <p style="color:red;">{settingsError}</p>
+      {/if}
+
+      <div class="actions">
+        <button on:click={checkSettingsLogin}>Enter</button>
+        <button on:click={() => showSettingsAuth = false}>Cancel</button>
+      </div>
+    </div>
+  {/if}
+
+
+  {#if showSettingsPage}
+    <div class="settings-page">
+      <h2>⚙ Settings</h2>
+      <p>Here you can configure admin or system settings.</p>
+
+      <!-- 🖥 Device Name -->
+      <label>
+        Device Name:
+        <input type="text" bind:value={deviceName} placeholder="Enter device name" />
+      </label>
+
+      <!-- 🌐 Server URL -->
+      <label>
+        Server URL:
+        <input type="text" bind:value={SERVER_URL} />
+      </label>
+
+      <button on:click={closeSettings}>Back</button>
     </div>
   {/if}
 
@@ -599,6 +685,14 @@
     </div>
   {/if}
 
+  {#if loginImageUrls && loginImageUrls.length > 0}
+    <div class="login-result-below">
+      {#each loginImageUrls as url}
+        <img src={SERVER_URL + url} alt="Recognized face" />
+      {/each}
+    </div>
+  {/if}
+
 </div>
 
 <style>
@@ -608,8 +702,10 @@
     display: flex;
     flex-direction: column; 
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     background: #f9f9f9;
+    padding: 40px 0;
+    touch-action: manipulation;
   }
 
   .big-btn {
@@ -621,6 +717,17 @@
     background: #0077cc;
     color: white;
     cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .login-btn {
+    position: relative;
+    top: 120px; /* move down slightly */
+  }
+
+  .register-btn {
+    position: relative;
+    bottom: 700px; /* move up slightly if needed */
   }
 
   .form {
@@ -642,6 +749,7 @@
     font-size: 1.2rem;
     border: 1px solid #ccc;
     border-radius: 8px;
+    touch-action: manipulation;
   }
 
   .actions {
@@ -659,6 +767,7 @@
     border-radius: 8px;
     font-size: 1.2rem;
     cursor: pointer;
+    touch-action: manipulation;
   }
 
   .cancel-btn {
@@ -670,6 +779,7 @@
     border-radius: 8px;
     font-size: 1.2rem;
     cursor: pointer;
+    touch-action: manipulation;
   }
 
   .scanner-actions {
@@ -686,6 +796,7 @@
     border-radius: 8px;
     font-size: 1rem;
     cursor: pointer;
+    touch-action: manipulation;
   }
 
   .stop-btn {
@@ -696,6 +807,7 @@
     border-radius: 8px;
     font-size: 1rem;
     cursor: pointer;
+    touch-action: manipulation;
   }
 
   .qr-reader {
@@ -737,6 +849,7 @@
     background: #0077cc;
     color: white;
     cursor: pointer;
+    touch-action: manipulation;
   }
   .login-result {
     margin-top: 20px;
@@ -765,14 +878,79 @@
   }
   .camera-video {
     width: 100%;
-    max-width: 400px;          /* keeps consistent desktop width */
-    aspect-ratio: 4 / 3;       /* keeps proper camera proportions */
-    border: 2px solid #0077cc; /* same border for both */
-    border-radius: 10px;
-    object-fit: cover;         /* avoids squishing/stretching */
-    background: #000;          /* fills background when video not loaded */
+    height: 100%;
+    max-width: 600px;
+    max-height: 1024px;
+    object-fit: cover;         /* fills screen, keeps proportion */
+    border: none;
+    border-radius: 0;
+    background: #000;
     display: block;
-    margin: 1rem auto;         /* centers on page */
+    margin: 0;
+  }
+
+  .settings-auth, .settings-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    max-width: 400px;
+    background: #fff;
+    padding: 2rem;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    margin-top: 2rem;
+  }
+
+  .settings-auth input {
+    width: 100%;
+    padding: 10px;
+    margin: 8px 0;
+    font-size: 1rem;
+  }
+
+  .settings-page input {
+    width: 100%;
+    padding: 10px;
+    font-size: 1rem;
+    margin-top: 0.5rem;
+  }
+  .settings-page label {
+    width: 100%;
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+  }
+  .settings-btn {
+    position: absolute;
+    bottom: 200px; 
+    right: 30px;        
+    width: 50px;        /* smaller for touch screens */
+    height: 50px;
+    font-size: 1.6rem;
+    border: none;
+    border-radius: 50%;
+    background-color: #444;
+    color: white;
+    cursor: pointer;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.25);
+    transition: background 0.2s, transform 0.2s;
+    z-index: 1000;      /* ensure it stays above all other UI */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.8rem;
+    line-height: 1; /* removes weird emoji spacing */
+    padding: 0; 
+    touch-action: manipulation;
+  }
+  .settings-btn:hover {
+    background-color: #222;
+    transform: rotate(30deg);
+  }
+  .gear {
+    display: inline-block;
+    transform: translate(1px, 0px);/* 🔧 move the gear downward a bit */
   }
 
 </style>
