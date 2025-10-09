@@ -59,7 +59,7 @@
   let loginImageUrl = "";
   let loginImageUrls = [];
 
-  let SERVER_URL = "http://localhost:3000";
+  let SERVER_URL = "http://172.27.44.15:3000";
 
   // On mount: auto-select EMEET USB webcam
   onMount(async () => {
