@@ -6,7 +6,7 @@ import threading
 import time
 
 app = Flask(__name__)
-LED_PIN = 18
+LED_PIN = 17
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(LED_PIN, GPIO.OUT)
 
