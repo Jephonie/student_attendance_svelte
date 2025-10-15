@@ -59,6 +59,7 @@
   let loginImageUrl = "";
   let loginImageUrls = [];
 
+  const CAMERA_LED_URL = "http://10.249.38.255:5001"; // or http://<raspi-ip>:5001 if remote
   let SERVER_URL = "http://10.249.38.91:3000";
 
   // On mount: auto-select EMEET USB webcam
@@ -98,6 +99,8 @@
       // Always use the EMEET camera (already set in onMount)
       const cameraConfig = { deviceId: { exact: selectedCamera } };
 
+      await startCameraLED();
+
       await html5QrCode.start(
         cameraConfig,
         { fps: 10, qrbox: 250 },
@@ -136,6 +139,7 @@
       }
     }
     scannerActive = false;
+    stopCameraLED();
   }
 
   function fillFormFromQR(data) {
@@ -256,7 +260,7 @@
       const selected = devices.find(
         d => d.kind === "videoinput" && (d.deviceId === selectedCamera || d.deviceId === faceCamera)
       );
-
+      await startCameraLED();
       let constraints;
       if (selected) {
         constraints = { video: { deviceId: { exact: selected.deviceId } } };
@@ -386,6 +390,7 @@
     if (video) {
       video.srcObject = null;
     }
+    stopCameraLED();
   }
   
   async function startLoginCamera() {
@@ -395,6 +400,8 @@
       const emeetCam = devices.find(
         d => d.kind === "videoinput" && (d.label || "").toLowerCase().includes("emeet")
       );
+
+      await startCameraLED();
 
       let constraints;
       if (emeetCam) {
@@ -493,6 +500,8 @@
       loginStream = null;
     }
     if (loginVideo) loginVideo.srcObject = null;
+
+    stopCameraLED();
   }
 
   function saveDeviceName() {
@@ -517,6 +526,25 @@
   function closeSettings() {
     showSettingsPage = false;
   }
+
+  async function startCameraLED() {
+    try {
+      await fetch(`${CAMERA_LED_URL}/start_camera`, { method: "POST" });
+      console.log("LED ON + Camera started");
+    } catch (err) {
+      console.error("Error starting camera LED:", err);
+    }
+  }
+
+  async function stopCameraLED() {
+    try {
+      await fetch(`${CAMERA_LED_URL}/stop_camera`, { method: "POST" });
+      console.log("LED OFF + Camera stopped");
+    } catch (err) {
+      console.error("Error stopping camera LED:", err);
+    }
+  }
+
 </script>
 
 <div class="screen">
