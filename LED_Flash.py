@@ -1,50 +1,60 @@
+# camera_led_control.py
+from flask import Flask, jsonify
 import RPi.GPIO as GPIO
+import cv2
+import threading
 import time
 
-# --- Configuration ---
-# Use the Broadcom SOC channel numbering (BCM mode)
-# This refers to the GPIO number, not the physical pin number.
-# GPIO 17 (Physical Pin 11) is a common choice for this simple example.
-LED_PIN = 17 
-BLINK_DELAY_SECONDS = 1.0
+app = Flask(__name__)
+LED_PIN = 18
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(LED_PIN, GPIO.OUT)
 
-def setup():
-    """Sets up the GPIO mode and configures the LED pin as an output."""
-    # Set the GPIO numbering convention to use the BCM (Broadcom) pin numbers
-    GPIO.setmode(GPIO.BCM)
-    
-    # Configure the chosen pin (GPIO 17) as an output pin
-    GPIO.setup(LED_PIN, GPIO.OUT)
-    print(f"GPIO setup complete. LED connected to GPIO {LED_PIN}.")
+camera = None
+is_running = False
 
-def loop():
-    """The main loop that continuously blinks the LED."""
-    print("Starting LED blink sequence. Press Ctrl+C to stop.")
-    while True:
-        # Turn the LED on (set the pin voltage to HIGH)
-        GPIO.output(LED_PIN, GPIO.HIGH)
-        # print("LED ON")
-        time.sleep(BLINK_DELAY_SECONDS)
-        
-        # Turn the LED off (set the pin voltage to LOW)
+def camera_thread():
+    global camera, is_running
+    GPIO.output(LED_PIN, GPIO.HIGH)
+    camera = cv2.VideoCapture(0)
+
+    if not camera.isOpened():
         GPIO.output(LED_PIN, GPIO.LOW)
-        # print("LED OFF")
-        time.sleep(BLINK_DELAY_SECONDS)
+        is_running = False
+        print("Camera failed to open.")
+        return
 
-def cleanup():
-    """Ensures all GPIO pins are safely returned to input mode."""
-    print("\nCleaning up GPIO settings...")
-    GPIO.cleanup()
-    print("Program terminated successfully.")
+    print("Camera started, LED ON")
 
-if __name__ == '__main__':
+    while is_running:
+        ret, frame = camera.read()
+        if not ret:
+            break
+        time.sleep(0.05)
+
+    camera.release()
+    GPIO.output(LED_PIN, GPIO.LOW)
+    print("Camera stopped, LED OFF")
+
+@app.route("/start_camera", methods=["POST"])
+def start_camera():
+    global is_running
+    if is_running:
+        return jsonify({"status": "ok", "message": "Camera already running"})
+    is_running = True
+    threading.Thread(target=camera_thread).start()
+    return jsonify({"status": "ok", "message": "Camera started"})
+
+@app.route("/stop_camera", methods=["POST"])
+def stop_camera():
+    global is_running
+    if not is_running:
+        return jsonify({"status": "ok", "message": "Camera not running"})
+    is_running = False
+    return jsonify({"status": "ok", "message": "Stopping camera"})
+
+if __name__ == "__main__":
     try:
-        setup()
-        loop()
-    except KeyboardInterrupt:
-        # This catches the Ctrl+C input from the user
-        cleanup()
-    except Exception as e:
-        # Catch any other unexpected errors and still clean up
-        print(f"An error occurred: {e}")
-        cleanup()
+        app.run(host="0.0.0.0", port=5001)
+    finally:
+        GPIO.cleanup()
