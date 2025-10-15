@@ -59,7 +59,7 @@
   let loginImageUrl = "";
   let loginImageUrls = [];
 
-  const CAMERA_LED_URL = "http://127.0.0.1:5001"; // or http://<raspi-ip>:5001 if remote
+  const CAMERA_LED_URL = "http://10.249.38.255:5001"; // or http://<raspi-ip>:5001 if remote
   let SERVER_URL = "http://10.249.38.91:3000";
 
   // On mount: auto-select EMEET USB webcam
