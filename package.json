@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite --host & sleep 7 && chromium --no-sandbox --kiosk --use-gl=angle --use-angle=gl --disable-gpu --disable-software-rasterizer http://localhost:4173",
 		"build": "vite build",
-		"preview": "vite preview",
+		"preview": "vite preview --host & npx wait-on http://localhost:4173 && chromium --no-sandbox --kiosk --use-gl=angle --use-angle=gl --disable-gpu --disable-software-rasterizer --noerrdialogs --disable-infobars --start-fullscreen --incognito http://localhost:4173",
 		"prepare": "svelte-kit sync || echo ''",
 		"format": "prettier --write .",
 		"lint": "prettier --check ."
