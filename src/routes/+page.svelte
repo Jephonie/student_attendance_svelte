@@ -59,7 +59,7 @@
   let loginImageUrl = "";
   let loginImageUrls = [];
 
-  const CAMERA_LED_URL = "http://10.249.38.255:5001"; // or http://<raspi-ip>:5001 if remote
+  const CAMERA_LED_URL = "http://10.249.38.61:5001"; // or http://<raspi-ip>:5001 if remote
   let SERVER_URL = "http://10.249.38.91:3000";
 
   // On mount: auto-select EMEET USB webcam
@@ -395,7 +395,14 @@
   
   async function startLoginCamera() {
     try {
-      // Dynamically find EMEET camera id
+      if (loginStream) {
+        loginStream.getTracks().forEach(t => t.stop());
+        loginStream = null;
+      }
+      if (loginVideo) loginVideo.srcObject = null;
+
+      // Small delay to release hardware
+      await new Promise(res => setTimeout(res, 500));
       const devices = await navigator.mediaDevices.enumerateDevices();
       const emeetCam = devices.find(
         d => d.kind === "videoinput" && (d.label || "").toLowerCase().includes("emeet")
@@ -423,6 +430,7 @@
 
       if (detectionInterval) clearInterval(detectionInterval);
       detectionInterval = setInterval(sendFrameForDetection, 500);
+      console.log("✅ Login camera started");
 
     } catch (err) {
       console.error("Login camera error:", err);
@@ -491,16 +499,25 @@
   }
 
   function stopLoginCamera() {
+    console.log("🛑 Stopping login camera...");
     if (detectionInterval) {
       clearInterval(detectionInterval);
       detectionInterval = null;
     }
     if (loginStream) {
-      loginStream.getTracks().forEach((t) => t.stop());
+      loginStream.getTracks().forEach(track => {
+        track.stop();
+        loginStream.removeTrack(track);
+      });
       loginStream = null;
     }
-    if (loginVideo) loginVideo.srcObject = null;
 
+    if (loginVideo) {
+      loginVideo.pause();
+      loginVideo.srcObject = null;
+    }
+
+    
     stopCameraLED();
   }
 
