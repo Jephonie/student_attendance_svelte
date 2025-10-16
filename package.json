@@ -4,9 +4,9 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "vite --host & sleep 5 && chromium --no-sandbox --kiosk http://localhost:5173",
+		"dev": "vite --host & sleep 5 && chromium --no-sandbox --kiosk http://localhost:4173",
 		"build": "vite build",
-		"preview": "vite preview",
+		"preview": "vite preview --host & sleep 5 && chromium --no-sandbox --kiosk http://localhost:4173",
 		"prepare": "svelte-kit sync || echo ''",
 		"format": "prettier --write .",
 		"lint": "prettier --check ."
