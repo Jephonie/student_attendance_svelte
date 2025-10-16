@@ -385,9 +385,11 @@
   function stopCamera() {
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
+      track.stop();
       stream = null;
     }
     if (video) {
+      loginVideo.pause();
       video.srcObject = null;
     }
     stopCameraLED();
