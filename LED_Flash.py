@@ -55,10 +55,16 @@ def camera_thread():
         with lock:
             if not is_running:
                 break
-        ret, frame = camera.read()
-        if not ret:
-            print("[WARN] Camera frame not captured.")
-            break
+        if camera.isOpened():
+            ret, frame = camera.read()
+            if not ret:
+                print("[WARN] Frame not captured, retrying...")
+                time.sleep(0.1)
+                continue
+        else:
+            print("[WARN] Camera not opened, retrying...")
+            time.sleep(1)
+            continue
         time.sleep(0.05)
 
     print("[INFO] Stopping camera...")
