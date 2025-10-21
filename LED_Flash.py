@@ -1,56 +1,63 @@
-from flask import Flask, jsonify, request
-import RPi.GPIO as GPIO
 import time
-from adafruit_vl53l0x import VL53L0X
-import board, busio
+import requests
+import board
+import busio
+import adafruit_vl53l0x
+import RPi.GPIO as GPIO
 
-# ---- Setup ----
+# ==== SETTINGS ====
+SERVER_URL = "http://192.168.100.15:5001"  # ✅ your Node/SvelteKit backend IP
+DISTANCE_THRESHOLD = 500  # mm
+NO_PERSON_TIMEOUT = 10    # seconds before stop
+LED_PIN = 18              # GPIO pin for LED
+
+# ==== INITIALIZE ====
 i2c = busio.I2C(board.SCL, board.SDA)
-sensor = VL53L0X(i2c)
+vl53 = adafruit_vl53l0x.VL53L0X(i2c)
 
-LED_PIN = 18
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(LED_PIN, GPIO.OUT)
+GPIO.output(LED_PIN, GPIO.LOW)
 
-app = Flask(__name__)
-last_seen = time.time()
-LED_ON = False
+camera_started = False
+last_seen_time = 0
 
-@app.route("/start_camera", methods=["POST"])
-def start_camera():
-    GPIO.output(LED_PIN, GPIO.HIGH)
-    global LED_ON
-    LED_ON = True
-    print("🎥 Camera started")
-    return jsonify({"status": "camera_started"})
+print("📏 VL53L0X distance sensor monitoring started...")
 
-@app.route("/stop_camera", methods=["POST"])
-def stop_camera():
-    GPIO.output(LED_PIN, GPIO.LOW)
-    global LED_ON
-    LED_ON = False
-    print("🛑 Camera stopped")
-    return jsonify({"status": "camera_stopped"})
-
-# Background loop – auto stop if 10 s no person
-@app.route("/sensor_loop", methods=["GET"])
-def loop():
-    global last_seen, LED_ON
+try:
     while True:
-        distance = sensor.range
+        distance = vl53.range  # distance in mm
+        now = time.time()
+
         print(f"Distance: {distance} mm")
-        if distance < 500:  # person detected within 0.5 m
-            last_seen = time.time()
-            if not LED_ON:
+
+        # ✅ Person detected (<= 500mm)
+        if distance <= DISTANCE_THRESHOLD:
+            last_seen_time = now
+            if not camera_started:
+                print("👤 Person detected - starting camera & LED ON")
                 GPIO.output(LED_PIN, GPIO.HIGH)
-                LED_ON = True
-        elif time.time() - last_seen > 10:
+                try:
+                    requests.post(f"{SERVER_URL}/start_camera", timeout=2)
+                except Exception as e:
+                    print("⚠️ Failed to notify server:", e)
+                camera_started = True
+
+        # 🚫 No person detected for a while
+        elif camera_started and (now - last_seen_time) > NO_PERSON_TIMEOUT:
+            print("🚶 No person for 10s - stopping camera & LED OFF")
             GPIO.output(LED_PIN, GPIO.LOW)
-            LED_ON = False
+            try:
+                requests.post(f"{SERVER_URL}/stop_camera", timeout=2)
+            except Exception as e:
+                print("⚠️ Failed to notify server:", e)
+            camera_started = False
+
         time.sleep(0.5)
 
-if __name__ == "__main__":
-    try:
-        app.run(host="0.0.0.0", port=5001)
-    except KeyboardInterrupt:
-        GPIO.cleanup()
+except KeyboardInterrupt:
+    print("\n🛑 Stopped by user")
+
+finally:
+    GPIO.output(LED_PIN, GPIO.LOW)
+    GPIO.cleanup()
