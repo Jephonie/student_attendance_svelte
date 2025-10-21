@@ -38,7 +38,7 @@ try:
                 print("👤 Person detected - starting camera & LED ON")
                 GPIO.output(LED_PIN, GPIO.HIGH)
                 try:
-                    requests.post(f"{SERVER_URL}/start_camera", timeout=2)
+                    requests.post(f"{SERVER_URL}/camera_start", timeout=2)
                 except Exception as e:
                     print("⚠️ Failed to notify server:", e)
                 camera_started = True
@@ -48,7 +48,7 @@ try:
             print("🚶 No person for 10s - stopping camera & LED OFF")
             GPIO.output(LED_PIN, GPIO.LOW)
             try:
-                requests.post(f"{SERVER_URL}/stop_camera", timeout=2)
+                requests.post(f"{SERVER_URL}/camera_stop", timeout=2)
             except Exception as e:
                 print("⚠️ Failed to notify server:", e)
             camera_started = False
