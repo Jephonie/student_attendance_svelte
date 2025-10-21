@@ -6,10 +6,10 @@ import adafruit_vl53l0x
 import RPi.GPIO as GPIO
 
 # ==== SETTINGS ====
-SERVER_URL = "http://DESKTOP-R98PM6A.local:5173/api/camera"  # ✅ your Node/SvelteKit backend IP
+SERVER_URL = "http://DESKTOP-R98PM6A.local:5173/api/camera"  # ✅ FIXED: No /start_camera
 DISTANCE_THRESHOLD = 500  # mm
 NO_PERSON_TIMEOUT = 10    # seconds before stop
-LED_PIN = 17           # GPIO pin for LED
+LED_PIN = 17             # GPIO pin for LED
 
 # ==== INITIALIZE ====
 i2c = busio.I2C(board.SCL, board.SDA)
@@ -38,7 +38,12 @@ try:
                 print("👤 Person detected - starting camera & LED ON")
                 GPIO.output(LED_PIN, GPIO.HIGH)
                 try:
-                    requests.post(SERVER_URL, json={"action": "start_camera"}, timeout=2)
+                    requests.post(
+                        SERVER_URL,
+                        json={"action": "start_camera"},   # ✅ Send JSON body
+                        headers={"Content-Type": "application/json"},
+                        timeout=2
+                    )
                 except Exception as e:
                     print("⚠️ Failed to notify server:", e)
                 camera_started = True
@@ -48,7 +53,12 @@ try:
             print("🚶 No person for 10s - stopping camera & LED OFF")
             GPIO.output(LED_PIN, GPIO.LOW)
             try:
-                requests.post(SERVER_URL, json={"action": "stop_camera"}, timeout=2)
+                requests.post(
+                    SERVER_URL,
+                    json={"action": "stop_camera"},      # ✅ Send JSON body
+                    headers={"Content-Type": "application/json"},
+                    timeout=2
+                )
             except Exception as e:
                 print("⚠️ Failed to notify server:", e)
             camera_started = False
