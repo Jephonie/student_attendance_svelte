@@ -6,10 +6,10 @@ import adafruit_vl53l0x
 import RPi.GPIO as GPIO
 
 # ==== SETTINGS ====
-SERVER_URL = "http://192.168.100.15:5173/api/sensor"  # ✅ your Node/SvelteKit backend IP
+SERVER_URL = "http://192.168.100.15:5050/api/sensor"  # ✅ your Node/SvelteKit backend IP
 DISTANCE_THRESHOLD = 500  # mm
 NO_PERSON_TIMEOUT = 10    # seconds before stop
-LED_PIN = 18              # GPIO pin for LED
+LED_PIN = 17             # GPIO pin for LED
 
 # ==== INITIALIZE ====
 i2c = busio.I2C(board.SCL, board.SDA)
