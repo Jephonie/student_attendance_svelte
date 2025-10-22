@@ -6,7 +6,7 @@ import adafruit_vl53l0x
 import RPi.GPIO as GPIO
 
 # ==== SETTINGS ====
-SERVER_URL = "http://DESKTOP-R98PM6A.local:5173/api/camera"  # ✅ FIXED: No /start_camera
+SERVER_URL = "http://DESKTOP-R98PM6A.local:4173/api/camera"  # ✅ FIXED: No /start_camera
 DISTANCE_THRESHOLD = 500  # mm
 NO_PERSON_TIMEOUT = 10    # seconds before stop
 LED_PIN = 17             # GPIO pin for LED
